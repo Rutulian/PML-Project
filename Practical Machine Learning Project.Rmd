@@ -1,0 +1,85 @@
+---
+title: "Predicting Weight Lift Quality with Multiple Accelerometers"
+author: "A. Nonymous"
+date: "22/02/2015"
+output: html_document
+---
+
+## Introduction
+This project builds a predictive model on data provided by the LES at <http://groupware.les.inf.puc-rio.br/har>.  The data collected comprises measurements from accelerometers placed at 4 locations on 6 participants while they performed barbell lifts correctly and in 5 differently incorrect ways.
+
+## Initialisation and Data Preprocessing
+Some required libraries are loaded, then the training set given is split further into train and test sets for cross-validation purposes.
+
+```{r}
+library(caret)
+library(plyr)
+library(RANN)
+library(randomForest)
+raw_train    <- read.csv('pml-training.csv')
+validation  <- read.csv('pml-testing.csv')
+
+set.seed(78910)
+train_idx <- createDataPartition(y=raw_train$classe, list=FALSE, p=0.6)
+train     <- raw_train[train_idx, ]
+test      <- raw_train[-train_idx, ]
+```
+
+We have 159 potential predictor variables, including *classe*, so we can afford to be fairly brutal in our initial pruning. A model fit will be attempted on the result, and after cross-validation of results we may return to this step.  First of all, all non-numeric variables are discarded.  Next variables with near-zero variance are discarded.  The all-numeric dataset allows the use of K-nearest-neighbour imputation via caret, and in the same command PCA is performed to reduce the dimensionality of the problem.  This results in a predictor vector only 30 long for each item, a significant reduction.  Note that the preprocessor is created only from the training set, and then used to apply the same processing to both test and validation sets.
+
+```{r}
+numerics <- which(lapply(train,class) %in% c('numeric'))
+train_class <- train[ ,160]
+test_class  <- test[ ,160]
+validation_probid <- validation[ ,160]
+
+train <- train[, numerics]
+test  <- test[, numerics]
+validation <- validation[, numerics]
+
+nzv <- nearZeroVar(train)
+train <- train[-nzv]
+test  <- test[-nzv]
+validation <- validation[-nzv]
+
+imputer <- preProcess(train, method=c('knnImpute','pca'))
+
+train <- predict(imputer, train)
+test  <- predict(imputer, test)
+validation <- predict(imputer, validation)
+```
+
+## Model Fit
+
+Next a random forest model is trained on the training set data.  The first run of this was performed using caret, as in the commented line, which found an optimal mtry parameter.  As this takes a number of hours to compute it has been left out for the purposes of producing this document, though I will try to update the gh-pages after submission to demonstrate it and provide a graph of mtry vs accuracy.  The default value calculated by randomForest is 5, which works.  This parameter sets the number of candidate variables selected as potential splitters at each branch of the tree.
+
+```{r}
+#model <- train(train, train_class, method='rf', ntree=500)
+model <- randomForest(train, train_class, ntree=500)
+plot(model)
+```
+
+This plot shows the diminishing benefit of increasing numbers of trees.  Each line shows the class error for the 5 possible classes.  Up to 100 the error drops rapidly, from there on it appears to be approaching an asymptote.
+
+## In- and Out-of-sample error
+```{r}
+train_pred <- predict(model, train)
+confusionMatrix(train_pred, train_class)
+```
+
+This confusion matrix shows that in-sample error is zero, as accuracy is 100%.  This could be an indicator of overfitting, but out-of-sample error should be investigated before making any conclusions.
+
+```{r}
+test_pred <- predict(model, test)
+confusionMatrix(test_pred, test_class)
+```
+
+Here an out-of-sample accuracy of 0.9474 is obtained, with a 95% confidence interval lower bound of 0.9422.  This means we should expect to misclassify less than 5.78% of similar data, so when we make 20 predictions it is highly unlikely that more than one will be incorrect.  One caveat is that the data to be predicted should have been collected by the same mechanisms as that used in the training set, which is believed to be the case for this project.
+
+## Predicting for Validation (and fun)
+Applying this model to the validation set provided gives answers as follows:
+```{r}
+answers <- predict(model, validation)
+answers
+```
+These answers have been accepted by the autograder as correct.
